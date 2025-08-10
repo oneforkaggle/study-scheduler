@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Study Scheduler – Live v2 (linked countdown)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0b0d12; --card:#121622; --muted:#98a2b3; --text:#e6e9ef; --accent:#6ea8fe; --accent2:#7dd3fc; --border:#1e2433; --good:#34d399; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0; font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif; background:var(--bg); color:var(--text)}
+  .container{max-width:1250px; margin:0 auto; padding:20px}
+  h1{margin:0 0 12px}
+  .btn{cursor:pointer; border:1px solid var(--border); background:#0f1321; color:#fff; border-radius:10px; padding:8px 12px}
+  .btn:hover{border-color:#2b3347}
+  .btn.primary{background:linear-gradient(135deg, var(--accent), var(--accent2)); color:#081220; font-weight:700; border:none}
+  .btn.icon{padding:6px 8px; border-radius:8px}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.3)}
+  .muted{color:var(--muted)}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px}
+  .rowBetween{display:flex; justify-content:space-between; align-items:center; border:1px solid var(--border); border-radius:12px; padding:10px; background:#0f1321; margin-bottom:8px; flex-wrap:wrap; gap:8px}
+  .daystrip{display:flex; gap:8px; overflow-x:auto; scroll-snap-type:x mandatory; padding-bottom:6px}
+  .day{min-width:200px; scroll-snap-align:center; border:1px solid var(--border); border-radius:12px; padding:10px; background:#0f1321; cursor:pointer; position:relative}
+  .day.active{outline:2px solid var(--accent)}
+  .day .title{display:flex; justify-content:space-between; align-items:center}
+  .tasks{list-style:none; padding:0; margin:8px 0 0 0; display:flex; flex-direction:column; gap:6px}
+  .task{display:flex; align-items:center; gap:6px; font-size:13px}
+  .task .dot{width:8px; height:8px; border-radius:50%; background:#6ea8fe; display:inline-block}
+  .task.done{opacity:.5; text-decoration:line-through}
+  textarea, input[type="text"], input[type="time"], input[type="date"], select{
+    background:#0e1220; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; width:100%; font-size:16px; line-height:1.35;
+  }
+  .table-head{display:grid; grid-template-columns:100px 1fr 1fr 1fr; gap:8px; font-weight:600; opacity:.8; border-bottom:1px solid var(--border); padding-bottom:6px; margin-bottom:6px}
+  .table-row{display:grid; grid-template-columns:100px 1fr 1fr 1fr; gap:8px; align-items:start; padding:8px 0; border-top:1px dashed var(--border)}
+  .wrap{white-space:normal; word-break:break-word; overflow-wrap:anywhere}
+  .pill{display:inline-flex; padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:#0f1321; gap:8px; align-items:center}
+  .h-accent{color:#e7f0ff}
+  .dtag{font-weight:800}
+  /* --- Modals --- */
+  .modal{position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.5); z-index:1000}
+  .modal .panel{background:#111726; border:1px solid var(--border); border-radius:12px; padding:16px; width:min(560px,92vw); max-height:85vh; overflow:auto}
+  @media (max-width: 1100px){ .grid2{grid-template-columns:1fr} .table-head,.table-row{grid-template-columns:100px 1fr} }
+</style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<div class="container">
+  <h1>📚 Study Scheduler – Live v2</h1>
+
+  <div class="grid2">
+    <div class="card" id="thisWeek"></div>
+    <div class="card" id="nextWeek"></div>
+  </div>
+
+  <!-- Controls between weeks and strip -->
+  <div class="card" style="margin-top:16px" id="controlsBar">
+    <div class="header">
+      <div style="display:flex; gap:8px; align-items:center">
+        <label>跳轉到日期</label>
+        <input type="date" id="jumpDate"/>
+        <button class="btn" id="jumpBtn">Go</button>
+        <span class="muted">或直接左右滑動日條</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center">
+        <button class="btn" id="openQuickAdd">+ Add Task</button>
+        <button class="btn" id="openRecurring">⚙︎ Recurring Schedule</button>
+        <span class="muted" style="margin:0 6px">｜</span>
+        <button class="btn" id="btnSignIn">登入 Google</button>
+        <button class="btn" id="btnLoadCloud" disabled>從雲端載入</button>
+        <button class="btn" id="btnSaveCloud" disabled>存到雲端</button>
+        <label class="pill" style="gap:6px"><input type="checkbox" id="autoSyncChk"/> 自動同步</label>
+        <span id="syncStatus" class="muted" style="font-size:12px"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px" id="stripCard"></div>
+
+  <div class="grid3" style="margin-top:16px">
+    <div class="card" id="duePast"></div>
+    <div class="card" id="dueNext7"></div>
+    <div class="card" id="dueFar"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px" id="planner"></div>
+</div>
+
+<!-- Modal: Time-block -->
+<div class="modal" id="modalTB">
+  <div class="panel">
+    <h3 style="margin-top:0">新增時間區段任務</h3>
+    <div class="grid3">
+      <div>
+        <label>日期</label>
+        <input type="date" id="tbDate" disabled>
+      </div>
+      <div>
+        <label>開始</label>
+        <input type="time" id="tbStart" value="09:00" step="60">
+      </div>
+      <div>
+        <label>結束</label>
+        <input type="time" id="tbEnd" value="10:00" step="60">
+      </div>
+    </div>
+    <div class="grid3" style="margin-top:8px">
+      <div>
+        <label>科目</label>
+        <select id="tbSubject"></select>
+      </div>
+      <div>
+        <label>類型</label>
+        <select id="tbType">
+          <option>Task</option><option>Preview</option><option>Review</option><option>Homework</option><option>Exam</option><option>Class</option>
+        </select>
+      </div>
+      <div>
+        <label>加入倒數</label><br/>
+        <label style="display:inline-flex; align-items:center; gap:6px"><input type="checkbox" id="tbCountdownChk"> 包含於倒數</label>
+      </div>
+    </div>
+    <div style="margin-top:8px">
+      <label>內容</label>
+      <input type="text" id="tbText" placeholder="要做什麼？">
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px; justify-content:flex-end">
+      <button class="btn" id="tbCancel">取消</button>
+      <button class="btn primary" id="tbSave">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Recurring -->
+<div class="modal" id="modalRecurring">
+  <div class="panel">
+    <h3 style="margin-top:0">固定課表（每週重複）</h3>
+    <div class="muted" style="margin-bottom:6px">新增你每週固定的上課時段（會自動顯示在日條，也會讓倒數與每週筆記連動）。</div>
+    <div id="recList"></div>
+    <div style="margin-top:8px; display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px">
+      <select id="recWeekday">
+        <option value="0">Sun</option><option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option><option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option>
+      </select>
+      <select id="recSubject"></select>
+      <input type="time" id="recStart" value="09:00" step="60">
+      <input type="time" id="recEnd" value="10:00" step="60">
+      <button class="btn" id="recAdd">+ Add</button>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px; justify-content:flex-end">
+      <button class="btn" id="recClose">關閉</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Quick Add -->
+<div class="modal" id="modalQuick">
+  <div class="panel">
+    <h3 style="margin-top:0">快速新增任務（必選日期，不需時間段）</h3>
+    <div class="grid3">
+      <div>
+        <label>日期</label>
+        <input type="date" id="qaDate">
+      </div>
+      <div>
+        <label>科目</label>
+        <select id="qaSubject"></select>
+      </div>
+      <div>
+        <label>加入倒數</label><br/>
+        <label style="display:inline-flex; align-items:center; gap:6px"><input type="checkbox" id="qaCountdownChk"> 包含於倒數</label>
+      </div>
+    </div>
+    <div style="margin-top:8px">
+      <label>類型</label>
+      <select id="qaType">
+        <option>Task</option><option>Preview</option><option>Review</option><option>Homework</option><option>Exam</option><option>Class</option>
+      </select>
+    </div>
+    <div style="margin-top:8px">
+      <label>內容</label>
+      <input type="text" id="qaText" placeholder="要做什麼？">
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px; justify-content:flex-end">
+      <button class="btn" id="qaCancel">取消</button>
+      <button class="btn primary" id="qaSave">儲存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== Utils & constants =====
+const SUBJECTS = ['Biology','Biochem','English','Physics','Chemistry'];
+const KEY='study-scheduler-live-v2';
+const DAY=86400000;
+const startOfDay = d=>{ const x=new Date(d); x.setHours(0,0,0,0); return x };
+const addDays = (d,n)=> new Date(startOfDay(d).getTime()+n*DAY);
+const weekStartOf = d=> addDays(startOfDay(d), -startOfDay(d).getDay()); // Sun-based week
+const dateKey = d => { const x=startOfDay(d); const y=x.getFullYear(); const m=String(x.getMonth()+1).padStart(2,'0'); const dd=String(x.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}` };
+const iso = d=> startOfDay(d).toISOString();
+const fmtMD = d=> `${d.getMonth()+1}/${d.getDate()}`;
+
+// ===== Store =====
+let store = load() || {
+  weekNotes: [],  // {id, weekStartISO, subject, lessons:[{id,text,reviews[3],reviewTs[3]}], homework:[{id,text,done}], exams:[{id,text,done}]}
+  dayPlans: {},   // { 'YYYY-MM-DD': [{id,start?,end?,text,subject,type,done, includeInCountdown}] }
+  pinnedDateISO: iso(new Date()),
+  baseOffset: 0,
+  recurring: [],  // [{id, weekday(0-6), subject, start, end}]
+};
+saveLocal();
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) }catch{return null} }
+function saveLocal(){ localStorage.setItem(KEY, JSON.stringify(store)) }
+
+function ensureNote(weekStartISO, subject){
+  let n = store.weekNotes.find(x=> x.weekStartISO===weekStartISO && x.subject===subject);
+  if(!n){ n = { id: (crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), weekStartISO, subject, taught:'', homework:[], exams:[], lessons:[] }; store.weekNotes.push(n); save(); }
+  if(!n.lessons || n.lessons.length===0) n.lessons=[{ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), text:'', reviews:[false,false,false], reviewTs:[null,null,null] }];
+  if(!n.homework || n.homework.length===0) n.homework=[{ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), text:'', done:false }];
+  if(!n.exams || n.exams.length===0) n.exams=[{ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), text:'', done:false }];
+  return n;
+}
+function weekStartFromBase(offset=0){ return addDays(weekStartOf(new Date()), (store.baseOffset + offset)*7) }
+
+// ===== Weeks table =====
+function renderWeekBlock(el, title, startDate){
+  const endDate = addDays(startDate,6);
+  const startISO = iso(startOfDay(startDate));
+  const head = `
+    <div class="header">
+      <h3 style="margin:0">${title} · ${fmtMD(startDate)} - ${fmtMD(endDate)}</h3>
+      <div style="display:flex; gap:8px">
+        <button class="btn" data-shift="-1">◀ Prev</button>
+        <button class="btn" data-shift="1">Next ▶</button>
+      </div>
+    </div>
+    <div class="table-head">
+      <div>Subject</div><div>Lesson Content</div><div>Homework</div><div>Exams</div>
+    </div>
+  `;
+
+  const rows = SUBJECTS.map(sub=>{
+    const n = ensureNote(startISO, sub);
+    const ls=n.lessons[0]; const hw=n.homework[0]; const ex=n.exams[0];
+
+    return `
+      <div class="table-row">
+        <div style="font-weight:700; letter-spacing:.3px">${sub}</div>
+        <div>
+          <div style="border:1px solid var(--border); border-radius:10px; padding:8px; margin-bottom:6px">
+            <textarea rows="2" class="wrap" placeholder="What was taught this week?" data-bind="lesson-text" data-id="${ls.id}" data-sub="${sub}" data-week="${startISO}">${ls.text||''}</textarea>
+            <div style="display:flex; gap:12px; margin-top:8px; align-items:center; flex-wrap:wrap">
+              ${[0,1,2].map(i=>{
+                const checked = ls.reviews?.[i] ? 'checked' : '';
+                const label = `R${i+1}`;
+                return `
+                  <label style="display:inline-flex; align-items:center; gap:6px">
+                    <input type="checkbox" data-bind="lesson-review" data-id="${ls.id}" data-i="${i}" data-sub="${sub}" data-week="${startISO}" ${checked}/>
+                    <span style="opacity:.8; font-size:12px">${label}</span>
+                  </label>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex; gap:6px; align-items:flex-start; margin-bottom:6px">
+            <input type="checkbox" data-bind="hw-done" data-id="${hw.id}" data-sub="${sub}" data-week="${startISO}" ${hw.done?'checked':''}/>
+            <textarea class="wrap" rows="2" placeholder="Homework" data-bind="hw-text" data-id="${hw.id}" data-sub="${sub}" data-week="${startISO}">${hw.text||''}</textarea>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex; gap:6px; align-items:flex-start; margin-bottom:6px">
+            <input type="checkbox" data-bind="ex-done" data-id="${ex.id}" data-sub="${sub}" data-week="${startISO}" ${ex.done?'checked':''}/>
+            <textarea class="wrap" rows="2" placeholder="Exam / Quiz" data-bind="ex-text" data-id="${ex.id}" data-sub="${sub}" data-week="${startISO}">${ex.text||''}</textarea>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  el.innerHTML = head + rows;
+
+  el.querySelectorAll('[data-shift]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ store.baseOffset += Number(btn.getAttribute('data-shift')); save(); renderAll(); });
+  });
+
+  const getNote = (week, sub)=> ensureNote(week, sub);
+
+  // --- Lesson text ---
+  el.querySelectorAll('[data-bind="lesson-text"]').forEach(inp=> inp.oninput = ()=>{
+    const {sub, week} = inp.dataset; const id=inp.getAttribute('data-id');
+    const n=getNote(week, sub); n.lessons = n.lessons.map(x=> x.id===id? ({...x, text: inp.value}): x); save();
+    // keep countdown live-linked
+    buildDuePanels();
+  });
+  // --- Lesson review toggles ---
+  el.querySelectorAll('[data-bind="lesson-review"]').forEach(chk=> chk.onchange = ()=>{
+    const {sub, week} = chk.dataset; const id=chk.getAttribute('data-id'); const i=Number(chk.getAttribute('data-i'));
+    const n=getNote(week, sub);
+    n.lessons = n.lessons.map(x=>{
+      if(x.id!==id) return x;
+      const reviews=(x.reviews||[false,false,false]).slice(); const reviewTs=(x.reviewTs||[null,null,null]).slice();
+      reviews[i]=chk.checked; reviewTs[i]= chk.checked? new Date().toISOString(): null;
+      return {...x, reviews, reviewTs}
+    }); save(); renderAll();
+  });
+  // --- Homework text ---
+  el.querySelectorAll('[data-bind="hw-text"]').forEach(inp=> inp.oninput = ()=>{
+    const {sub, week} = inp.dataset; const id=inp.getAttribute('data-id');
+    const n=getNote(week, sub); n.homework = [ { ...(n.homework[0]||{}), id, text: inp.value, done: n.homework[0]?.done||false } ]; save();
+    // live link to countdown
+    buildDuePanels();
+  });
+  // --- Homework done ---
+  el.querySelectorAll('[data-bind="hw-done"]').forEach(chk=> chk.onchange = ()=>{
+    const {sub, week} = chk.dataset; const id=chk.getAttribute('data-id');
+    const n=getNote(week, sub); n.homework = [ { ...(n.homework[0]||{}), id, done: chk.checked, text: n.homework[0]?.text||'' } ]; save(); renderAll();
+  });
+  // --- Exam text ---
+  el.querySelectorAll('[data-bind="ex-text"]').forEach(inp=> inp.oninput = ()=>{
+    const {sub, week} = inp.dataset; const id=inp.getAttribute('data-id');
+    const n=getNote(week, sub); n.exams = [ { ...(n.exams[0]||{}), id, text: inp.value, done: n.exams[0]?.done||false } ]; save();
+    // live link to countdown
+    buildDuePanels();
+  });
+  // --- Exam done ---
+  el.querySelectorAll('[data-bind="ex-done"]').forEach(chk=> chk.onchange = ()=>{
+    const {sub, week} = chk.dataset; const id=chk.getAttribute('data-id');
+    const n=getNote(week, sub); n.exams = [ { ...(n.exams[0]||{}), id, done: chk.checked, text: n.exams[0]?.text||'' } ]; save(); renderAll();
+  });
+}
+
+// ===== Day strip =====
+let stripRange = { start: addDays(new Date(), -14), end: addDays(new Date(), +14) };
+function ensureDayArrayHas(date){
+  const margin = 5;
+  if(date < addDays(stripRange.start, margin)){ stripRange.start = addDays(stripRange.start, -14); }
+  if(date > addDays(stripRange.end, -margin)){ stripRange.end = addDays(stripRange.end, +14); }
+}
+function getAllDayItemsFor(date){ const key=dateKey(date); return (store.dayPlans[key]||[]).filter(x=> !x.start && !x.end) }
+function getTimedItemsFor(date){ const key=dateKey(date); return (store.dayPlans[key]||[]).filter(x=> x.start && x.end) }
+function getRecurringFor(date){ const wd = startOfDay(date).getDay(); return (store.recurring||[]).filter(r=> r.weekday===wd).map(r=> ({...r, isRecurringGenerated:true})) }
+
+function buildStrip(container){
+  const pinned = startOfDay(new Date(store.pinnedDateISO));
+  ensureDayArrayHas(pinned);
+  const days = []; for(let d=new Date(stripRange.start); d<=stripRange.end; d=addDays(d,1)) days.push(new Date(d));
+
+  const title = `
+    <div class="header">
+      <div style="display:flex; gap:8px; align-items:center">
+        <h3 style="margin:0">連續日條（點一下快速輸入／雙擊新增時間區段）</h3>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center">
+        <button class="btn" id="dayPrev">◀ Day</button>
+        <button class="btn" id="dayNext">Day ▶</button>
+        <button class="btn" id="dayToday">Today</button>
+        <span class="muted">Selected: ${pinned.toLocaleDateString()}</span>
+      </div>
+    </div>
+  `;
+  const todayKey = dateKey(new Date());
+  const pinnedKey = dateKey(pinned);
+
+  const cards = days.map(d=>{
+    const key = dateKey(d);
+    const selected = key===pinnedKey;
+
+    const allDay = getAllDayItemsFor(d);
+    const timed = getTimedItemsFor(d);
+    const rec = getRecurringFor(d);
+
+    return `
+      <div class="day ${selected?'active':''}" data-date="${key}">
+        <div class="title">
+          <div class="muted" style="font-size:12px">${d.toLocaleDateString(undefined,{ weekday:'short' })}${key===todayKey?' · <b>Today</b>':''}</div>
+          <div style="font-weight:800; font-size:20px">${fmtMD(d)}</div>
+        </div>
+        <ul class="tasks">
+          ${rec.map(r=> `<li class="task"><span class="dot"></span><span class="muted" style="font-size:12px">Class</span> <b>${r.subject}</b> ${r.start}-${r.end}</li>`).join('')}
+          ${timed.map(p=> `<li class="task ${p.done?'done':''}"><input type="checkbox" data-plan-done="${p.id}" ${p.done?'checked':''}/><b>${p.subject||''}</b> ${p.start}-${p.end} · ${p.text||''}</li>`).join('')}
+          ${allDay.map(p=> `<li class="task ${p.done?'done':''}"><input type="checkbox" data-plan-done="${p.id}" ${p.done?'checked':''}/> ${p.text||''} ${p.subject?('· '+p.subject):''}</li>`).join('')}
+        </ul>
+        <div class="inline-input">
+          <input type="text" placeholder="點此快速新增任務（Enter 儲存）" data-quick-input="${key}"/>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = title + `<div class="daystrip" id="daystrip">${cards}</div>`;
+
+  const todayBtn = container.querySelector('#dayToday');
+  if(dateKey(new Date(store.pinnedDateISO))===todayKey) todayBtn.classList.add('primary'); else todayBtn.classList.remove('primary');
+
+  const centerSelected = (behavior='auto')=>{
+    const strip = container.querySelector('#daystrip');
+    const sel = strip.querySelector('.day.active');
+    if(!sel) return;
+    const left = sel.offsetLeft - (strip.clientWidth - sel.offsetWidth)/2;
+    strip.scrollTo({ left: Math.max(0,left), behavior });
+  };
+
+  container.querySelector('#dayPrev').onclick = ()=>{ const newD=addDays(pinned,-1); store.pinnedDateISO = iso(newD); syncWeekToPinned(newD); save(); renderAll(); };
+  container.querySelector('#dayNext').onclick = ()=>{ const newD=addDays(pinned,+1); store.pinnedDateISO = iso(newD); syncWeekToPinned(newD); save(); renderAll(); };
+  container.querySelector('#dayToday').onclick = ()=>{ const today=new Date(); store.pinnedDateISO = iso(today); store.baseOffset = 0; save(); renderAll(); };
+
+  const stripDiv = container.querySelector('#daystrip');
+  stripDiv.addEventListener('scroll', e=>{
+    const div = e.currentTarget;
+    if(div.scrollLeft < 60){ stripRange.start = addDays(stripRange.start, -14); renderStripOnly(); }
+    else if(div.scrollWidth - div.clientWidth - div.scrollLeft < 60){ stripRange.end = addDays(stripRange.end, +14); renderStripOnly(); }
+  });
+
+  container.querySelectorAll('.day').forEach(div=>{
+    div.addEventListener('click', (e)=>{
+      if(e.target.closest('input, textarea, select, button, label')) return;
+      const key = div.getAttribute('data-date');
+      const d = new Date(key);
+      store.pinnedDateISO = d.toISOString();
+      syncWeekToPinned(d);
+      save(); renderAll();
+    });
+    div.addEventListener('dblclick', ()=>{ const key = div.getAttribute('data-date'); openTimeBlockModal(key); });
+  });
+
+  container.querySelectorAll('[data-quick-input]').forEach(inp=>{
+    const stop = e=> e.stopPropagation();
+    inp.addEventListener('click', stop);
+    inp.addEventListener('mousedown', stop);
+    inp.addEventListener('keydown', e=>{
+      e.stopPropagation();
+      if(e.key==='Enter'){
+        const key = inp.getAttribute('data-quick-input');
+        const text = inp.value.trim(); if(!text) return;
+        const arr = store.dayPlans[key] || [];
+        arr.push({ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), text, type:'Task', done:false, includeInCountdown:false });
+        store.dayPlans[key] = arr; save(); inp.value=''; renderAll();
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-plan-done]').forEach(chk=>{
+    chk.addEventListener('click', e=> e.stopPropagation());
+    chk.addEventListener('change', ()=>{
+      const id = chk.getAttribute('data-plan-done');
+      const key = chk.closest('.day').getAttribute('data-date');
+      const arr = store.dayPlans[key] || [];
+      const i = arr.findIndex(x=> x.id===id);
+      if(i>=0){ arr[i].done = chk.checked; store.dayPlans[key]=arr; save(); }
+    });
+  });
+
+  setTimeout(()=>centerSelected('auto'),0);
+}
+function renderStripOnly(){ buildStrip(document.getElementById('stripCard')); }
+
+function syncWeekToPinned(d){
+  const thisWs = weekStartOf(d);
+  const nowWs = weekStartOf(new Date());
+  const diffWeeks = Math.round((thisWs - nowWs)/DAY/7);
+  store.baseOffset = diffWeeks; // 讓 This/Next Week 對齊被選日期
+}
+
+// ===== Planner =====
+function buildPlanner(container){
+  const key = dateKey(new Date(store.pinnedDateISO||new Date()));
+  const arr = store.dayPlans[key] || [];
+  container.innerHTML = `
+    <div class="header">
+      <h3 style="margin:0">Day Planner · ${new Date(key).toLocaleDateString()} <span class="muted">（管理當天的所有任務；可直接編輯時間、科目與內容）</span></h3>
+      <button class="btn" id="openTBFromPlanner">+ 新增時間區段</button>
+    </div>
+    <div id="plans"></div>
+  `;
+  document.getElementById('openTBFromPlanner').onclick = ()=> openTimeBlockModal(key);
+  const list = container.querySelector('#plans');
+  function renderList(){
+    if(arr.length===0){
+      list.innerHTML = `<div class="muted" style="padding:8px">此日尚無任務。你可以按上方「+ 新增時間區段」，或在上方連續日條該日的輸入框直接新增。</div>`;
+      return;
+    }
+    list.innerHTML = arr.sort((a,b)=> (a.start||'').localeCompare(b.start||'')).map(p=> `
+      <div class="rowBetween">
+        <div style="display:grid; grid-template-columns:90px 90px 140px 140px 1fr 90px auto; gap:8px; align-items:center; width:100%">
+          <input type="time" step="60" value="${p.start||''}" data-bind="start" data-id="${p.id}"/>
+          <input type="time" step="60" value="${p.end||''}" data-bind="end" data-id="${p.id}"/>
+          <select data-bind="subject" data-id="${p.id}">
+            <option value="">Subject</option>
+            ${SUBJECTS.map(s=> `<option ${p.subject===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+          <select data-bind="type" data-id="${p.id}">
+            ${['Task','Preview','Review','Homework','Exam','Class'].map(t=> `<option ${p.type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+          <input type="text" value="${p.text||''}" placeholder="What to do" data-bind="text" data-id="${p.id}"/>
+          <label style="display:flex;align-items:center;gap:6px">
+            <input type="checkbox" ${p.done?'checked':''} data-bind="done" data-id="${p.id}"/> Done
+          </label>
+          <button class="btn" data-bind="del" data-id="${p.id}">Delete</button>
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('[data-bind]').forEach(el=>{
+      const id = el.getAttribute('data-id');
+      el.addEventListener('change', ()=>{
+        const idx = arr.findIndex(x=> x.id===id); if(idx<0) return;
+        const b = arr[idx];
+        switch(el.getAttribute('data-bind')){
+          case 'start': b.start = el.value || undefined; break;
+          case 'end': b.end = el.value || undefined; break;
+          case 'subject': b.subject = el.value || ''; break;
+          case 'type': b.type = el.value || 'Task'; break;
+          case 'text': b.text = el.value || ''; break;
+          case 'done': b.done = el.checked; break;
+          case 'del': arr.splice(idx,1); break;
+        }
+        store.dayPlans[key] = arr; save(); renderList(); renderStripOnly();
+      });
+    });
+  }
+  renderList();
+}
+
+// ===== Countdown panels =====
+function buildDuePanels(){
+  const pastEl = document.getElementById('duePast');
+  const next7El = document.getElementById('dueNext7');
+  const farEl = document.getElementById('dueFar');
+  const today = startOfDay(new Date());
+  const minus14 = addDays(today,-14), plus6 = addDays(today,6);
+
+  const pastList = [];
+  const next7List = [];
+  const farList = [];
+
+  // From recurring classes (not included in long-term; only past/next7)
+  for(let d=new Date(minus14); d<=plus6; d=addDays(d,1)){
+    const weekday = d.getDay();
+    (store.recurring||[]).forEach(r=>{
+      if(r.weekday!==weekday) return;
+      const n = ensureNote(iso(weekStartOf(d)), r.subject);
+      const hw = n.homework[0]; const ex = n.exams[0]; const ls = n.lessons[0];
+      const allDone = !!hw.done && !!ex.done && (ls.reviews||[]).every(Boolean);
+      if(allDone) return;
+      const item = { date:new Date(d), subject:r.subject, hwText: hw.text||'', exText: ex.text||'', hwDone: !!hw.done, exDone: !!ex.done, rev:(ls.reviews||[false,false,false]).slice(), weekISO: iso(weekStartOf(d)), kind:'CLASS' };
+      if(d<today) pastList.push(item); else next7List.push(item);
+    });
+  }
+
+  // From dayPlans (custom items that opted into countdown)
+  for(const [key, arr] of Object.entries(store.dayPlans)){
+    const d = new Date(key);
+    arr.forEach(p=>{
+      if(!p.includeInCountdown) return;
+      const base = { date:d, key, id:p.id, subject:p.subject||'', type:p.type||'Task', text:p.text||'', kind:'PLAN' };
+      if(d>=today && d<=plus6) next7List.push(base);
+      else if(d<today && d>=minus14) pastList.push(base);
+      else if(d>plus6) farList.push(base);
+    });
+  }
+
+  const dayDiff = (d)=> Math.round((startOfDay(d) - today)/DAY);
+  const fmtD = (n)=> n===0? 'D0' : (n>0? `D+${n}` : `D${n}`);
+
+  // sort
+  pastList.sort((a,b)=> b.date - a.date);
+  next7List.sort((a,b)=> a.date - b.date);
+  farList.sort((a,b)=> a.date - b.date);
+
+  const renderClassItem = (it)=>{
+    const d = dayDiff(it.date);
+    const w = it.weekISO; const s = it.subject;
+    const hwPart = `· <label><input type=\"checkbox\" data-ct=\"hw\" data-week=\"${w}\" data-sub=\"${s}\" ${it.hwDone?'checked':''}/> hw</label>` + (it.hwText? `：${it.hwText}`: '');
+    const exPart = ` · <label><input type=\"checkbox\" data-ct=\"ex\" data-week=\"${w}\" data-sub=\"${s}\" ${it.exDone?'checked':''}/> T</label>` + (it.exText? `：${it.exText}`: '');
+    return `
+      <div class=\"rowBetween\"> 
+        <div class=\"wrap\" style=\"flex:1;min-width:0\"> 
+          <b>${s}</b>${hwPart}${exPart}
+          <br/>
+          <label><input type=\"checkbox\" data-ct=\"r0\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[0]?'checked':''}/> R1</label>
+          <label style=\"margin-left:12px\"><input type=\"checkbox\" data-ct=\"r1\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[1]?'checked':''}/> R2</label>
+          <label style=\"margin-left:12px\"><input type=\"checkbox\" data-ct=\"r2\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[2]?'checked':''}/> R3</label>
+        </div>
+        <div class=\"dtag\">${fmtD(d)}</div>
+      </div>`;
+  };
+
+  const renderPlanItem = (it)=>{
+    const d = fmtD(dayDiff(it.date));
+    return `
+      <div class=\"rowBetween\">
+        <div class=\"wrap\" style=\"flex:1;min-width:0\"><b>${it.subject}</b> · ${it.type}${it.text? `：${it.text}`:''}</div>
+        <div style=\"display:flex; align-items:center; gap:8px\">
+          <div class=\"dtag\">${d}</div>
+          <button class=\"btn icon\" title=\"刪除\" data-del=\"1\" data-key=\"${it.key}\" data-id=\"${it.id}\">🗑</button>
+        </div>
+      </div>`;
+  };
+
+  const renderList = (el, title, list)=>{
+    el.innerHTML = `<h3 class=\"h-accent\" style=\"margin:0 0 8px 0\">${title}</h3>` +
+      (list.length? list.map(it=> it.kind==='CLASS' ? renderClassItem(it) : renderPlanItem(it)).join('')
+        : `<div class=\"muted\">沒有項目</div>`);
+  };
+
+  renderList(pastEl,'過去 14 天（由近到遠）', pastList);
+  renderList(next7El,'未來 7 天（由近到遠）', next7List);
+  renderList(farEl,'倒數 · 長期（不含固定課）', farList);
+
+  // interactive checklist handlers (delegation)
+  const onToggle = (e)=>{
+    const t = e.target; if(!(t instanceof HTMLInputElement)) return;
+    if(!t.matches('input[type="checkbox"][data-ct]')) return;
+    e.stopPropagation();
+    const week = t.getAttribute('data-week'); const sub = t.getAttribute('data-sub'); const ct=t.getAttribute('data-ct');
+    const n = ensureNote(week, sub);
+    if(ct==='hw'){ n.homework[0] = { ...(n.homework[0]||{}), done: t.checked, text: n.homework[0]?.text||'' }; }
+    else if(ct==='ex'){ n.exams[0] = { ...(n.exams[0]||{}), done: t.checked, text: n.exams[0]?.text||'' }; }
+    else if(ct && ct.startsWith('r')){
+      const i = Number(ct.slice(1));
+      const ls = n.lessons[0] || { reviews:[false,false,false] };
+      const rev = (ls.reviews||[false,false,false]).slice(); rev[i]=t.checked;
+      n.lessons[0] = { ...(n.lessons[0]||{}), reviews:rev };
+    }
+    save();
+    mountWeeks(); buildDuePanels();
+  };
+  pastEl.onclick = onToggle; pastEl.onchange = onToggle;
+  next7El.onclick = onToggle; next7El.onchange = onToggle;
+  farEl.onclick = onToggle; farEl.onchange = onToggle;
+
+  // delete custom countdown plan items
+  const onDelete = (e)=>{
+    const btn = e.target.closest('[data-del]'); if(!btn) return;
+    const key = btn.getAttribute('data-key'); const id = btn.getAttribute('data-id');
+    const arr = (store.dayPlans[key]||[]).filter(x=> x.id!==id);
+    store.dayPlans[key] = arr; save();
+    buildDuePanels(); renderStripOnly();
+    if(dateKey(new Date(store.pinnedDateISO))===key) buildPlanner(document.getElementById('planner'));
+  };
+  pastEl.addEventListener('click', onDelete);
+  next7El.addEventListener('click', onDelete);
+  farEl.addEventListener('click', onDelete);
+}
+
+// ===== Modals =====
+function openTimeBlockModal(dateKeyStr){
+  const m = document.getElementById('modalTB'); m.style.display='flex';
+  const d = document.getElementById('tbDate'); d.value = dateKeyStr;
+  const s = document.getElementById('tbSubject'); s.innerHTML = `<option value="">(Subject)</option>` + SUBJECTS.map(x=> `<option>${x}</option>`).join('');
+  document.getElementById('tbText').value=''; document.getElementById('tbType').value='Task'; document.getElementById('tbCountdownChk').checked=false;
+  document.getElementById('tbStart').value='09:00'; document.getElementById('tbEnd').value='10:00';
+  const close = ()=> m.style.display='none';
+  document.getElementById('tbCancel').onclick = close;
+  document.getElementById('tbSave').onclick = ()=>{
+    const key = d.value; if(!key){ alert('請選日期'); return }
+    const arr = store.dayPlans[key] || [];
+    arr.push({ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), start: document.getElementById('tbStart').value, end: document.getElementById('tbEnd').value, subject: s.value || '', type: document.getElementById('tbType').value || 'Task', text: document.getElementById('tbText').value || '', includeInCountdown: document.getElementById('tbCountdownChk').checked, done:false });
+    store.dayPlans[key] = arr; save(); close(); renderAll();
+  };
+}
+
+function openRecurringModal(){
+  const m = document.getElementById('modalRecurring'); m.style.display='flex';
+  const list = document.getElementById('recList');
+  const s = document.getElementById('recSubject'); s.innerHTML = SUBJECTS.map(x=> `<option>${x}</option>`).join('');
+  function render(){
+    list.innerHTML = (store.recurring||[]).map(r=> `
+      <div class="rowBetween">
+        <div><b>${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][r.weekday]}</b> · ${r.subject} ${r.start}-${r.end}</div>
+        <button class="btn" data-del="${r.id}">Delete</button>
+      </div>
+    `).join('') || `<div class="muted">尚未設定</div>`;
+    list.querySelectorAll('[data-del]').forEach(btn=> btn.onclick = ()=>{
+      const id = btn.getAttribute('data-del');
+      store.recurring = store.recurring.filter(x=> x.id!==id); save(); render(); renderStripOnly(); buildDuePanels();
+    });
+  }
+  render();
+  document.getElementById('recClose').onclick = ()=> m.style.display='none';
+  document.getElementById('recAdd').onclick = ()=>{
+    const wd = Number(document.getElementById('recWeekday').value);
+    const subj = document.getElementById('recSubject').value;
+    const st = document.getElementById('recStart').value;
+    const en = document.getElementById('recEnd').value;
+    store.recurring.push({ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), weekday:wd, subject:subj, start:st, end:en });
+    save(); render(); renderStripOnly(); buildDuePanels();
+  };
+}
+
+function openQuickAddModal(){
+  const m = document.getElementById('modalQuick'); m.style.display='flex';
+  const s = document.getElementById('qaSubject'); s.innerHTML = `<option value="">(Subject)</option>` + SUBJECTS.map(x=> `<option>${x}</option>`).join('');
+  document.getElementById('qaDate').value = dateKey(new Date(store.pinnedDateISO));
+  document.getElementById('qaType').value = 'Task';
+  document.getElementById('qaCountdownChk').checked = false;
+  document.getElementById('qaText').value = '';
+  const close = ()=> m.style.display='none';
+  document.getElementById('qaCancel').onclick = close;
+  document.getElementById('qaSave').onclick = ()=>{
+    const key = document.getElementById('qaDate').value; if(!key){ alert('請選日期'); return }
+    const arr = store.dayPlans[key] || [];
+    arr.push({ id:(crypto.randomUUID? crypto.randomUUID(): String(Math.random()).slice(2)), text: document.getElementById('qaText').value || '', subject: document.getElementById('qaSubject').value || '', type: document.getElementById('qaType').value || 'Task', includeInCountdown: document.getElementById('qaCountdownChk').checked, done:false });
+    store.dayPlans[key] = arr; save(); close(); renderAll();
+  };
+}
+
+// ===== Render orchestration =====
+function mountWeeks(){
+  renderWeekBlock(document.getElementById('thisWeek'), 'This Week', weekStartFromBase(0));
+  renderWeekBlock(document.getElementById('nextWeek'), 'Next Week', weekStartFromBase(1));
+}
+function renderAll(){
+  mountWeeks();
+  buildStrip(document.getElementById('stripCard'));
+  buildDuePanels();
+  buildPlanner(document.getElementById('planner'));
+}
+
+// ===== Controls & init =====
+function initControls(){
+  document.getElementById('jumpBtn').onclick = ()=>{
+    const v = document.getElementById('jumpDate').value; if(!v) return;
+    const d = new Date(v); store.pinnedDateISO = d.toISOString(); syncWeekToPinned(d); save(); renderAll();
+  };
+  document.getElementById('openRecurring').onclick = openRecurringModal;
+  document.getElementById('openQuickAdd').onclick = openQuickAddModal;
+  document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
+}
+
+// ===== Google Drive Sync (appDataFolder) =====
+const CLIENT_ID = '124645569118-mdt9acu68jh9jbs9ffd8vap9aeejer39.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+let tokenClient = null; let accessToken = null; let cloudFileId = null; // cached id
+const CLOUD_META_KEY = KEY + '-cloudId';
+const AUTOSYNC_KEY = KEY + '-autoSync';
+const setStatus = (msg)=>{ const el=document.getElementById('syncStatus'); if(el) el.textContent=msg||''; };
+function enableCloudButtons(enabled){
+  const ids=['btnLoadCloud','btnSaveCloud']; ids.forEach(id=>{ const b=document.getElementById(id); if(b){ b.disabled=!enabled; }});
+}
+function initAuthUI(){
+  cloudFileId = localStorage.getItem(CLOUD_META_KEY) || null;
+  const auto = localStorage.getItem(AUTOSYNC_KEY)==='1';
+  const autoChk = document.getElementById('autoSyncChk'); if(autoChk){ autoChk.checked = auto; autoChk.onchange = ()=>{ localStorage.setItem(AUTOSYNC_KEY, autoChk.checked?'1':'0'); setStatus(autoChk.checked?'自動同步：開啟':''); } }
+  const signBtn = document.getElementById('btnSignIn');
+  const loadBtn = document.getElementById('btnLoadCloud');
+  const saveBtn = document.getElementById('btnSaveCloud');
+  if(!window.google || !google.accounts || !google.accounts.oauth2){ setTimeout(initAuthUI, 300); return; }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: (resp)=>{
+      if(resp && resp.access_token){ accessToken = resp.access_token; enableCloudButtons(true); setStatus('已登入'); }
+    }
+  });
+  signBtn.onclick = ()=>{ tokenClient.requestAccessToken({prompt:'consent'}); };
+  loadBtn.onclick = ()=> cloudLoad();
+  saveBtn.onclick = ()=> cloudSave();
+}
+
+async function gFetch(url, opts={}){
+  if(!accessToken) throw new Error('尚未登入');
+  const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
+  if(!res.ok){ const t = await res.text(); throw new Error(`HTTP ${res.status}: ${t}`) }
+  return res;
+}
+async function findCloudFile(){
+  const cached = cloudFileId; if(cached) return cached;
+  const q = encodeURIComponent("name='study-scheduler.json' and 'appDataFolder' in parents");
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name,modifiedTime)&pageSize=1`;
+  const res = await gFetch(url);
+  const json = await res.json();
+  const id = (json.files && json.files[0] && json.files[0].id) || null;
+  if(id){ cloudFileId=id; localStorage.setItem(CLOUD_META_KEY,id); }
+  return id;
+}
+async function cloudLoad(){
+  try{
+    setStatus('從雲端載入中…');
+    const id = await findCloudFile();
+    if(!id){ setStatus('雲端尚未建立檔案'); return; }
+    const res = await gFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
+    const json = await res.json();
+    store = json; localStorage.setItem(KEY, JSON.stringify(store));
+    renderAll(); setStatus('載入完成');
+  }catch(e){ setStatus('載入失敗'); console.error(e); }
+}
+async function cloudSave(){
+  try{
+    setStatus('上傳中…');
+    const meta = { name: 'study-scheduler.json', parents:['appDataFolder'] };
+    const media = new Blob([JSON.stringify(store)], {type:'application/json'});
+    const boundary = 'foo_bar_baz_' + Math.random().toString(36).slice(2);
+    const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`;
+    const tail = `\r\n--${boundary}--`;
+    const multipart = new Blob([head, media, tail], {type:`multipart/related; boundary=${boundary}`});
+    let id = await findCloudFile();
+    let url, method;
+    if(id){ url = `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`; method='PATCH'; }
+    else { url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`; method='POST'; }
+    const res = await gFetch(url, { method, headers:{ 'Content-Type': multipart.type }, body: multipart });
+    const j = await res.json(); cloudFileId = j.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId);
+    setStatus('已同步到雲端');
+  }catch(e){ setStatus('雲端同步失敗'); console.error(e); }
+}
+
+// 覆寫 save：先本機儲存，再（若開啟且已登入）自動同步
+function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
+const debouncedCloudSave = debounce(()=>{ const auto = localStorage.getItem(AUTOSYNC_KEY)==='1'; if(auto && accessToken) cloudSave(); }, 1200);
+function save(){ saveLocal(); debouncedCloudSave(); }
+
+// ===== Boot =====
+function boot(){
+  initControls();
+  renderAll();
+  initAuthUI();
+  try{ runSelfTests(); }catch(e){ console.warn('[SelfTest] skipped', e); }
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+
+// ===== Tiny runtime tests =====
+function runSelfTests(){
+  const bakStore = JSON.parse(JSON.stringify(store));
+  const bakKEY = localStorage.getItem(KEY);
+  const bakAUTO = localStorage.getItem(AUTOSYNC_KEY);
+  const bakToken = accessToken;
+  let pass=0, fail=0;
+  try{
+    store.__test = Math.random();
+    saveLocal();
+    const v = localStorage.getItem(KEY);
+    if(typeof v==='string' && v.includes('__test')) pass++; else fail++;
+  }catch(e){ console.error('[SelfTest] saveLocal', e); fail++; }
+  try{
+    localStorage.setItem(AUTOSYNC_KEY,'1');
+    accessToken = null;
+    save();
+    pass++;
+  }catch(e){ console.error('[SelfTest] save wrapper', e); fail++; }
+  delete store.__test;
+  if(bakKEY!==null) localStorage.setItem(KEY,bakKEY); else localStorage.removeItem(KEY);
+  if(bakAUTO!==null) localStorage.setItem(AUTOSYNC_KEY,bakAUTO); else localStorage.removeItem(AUTOSYNC_KEY);
+  accessToken = bakToken;
+  console.log(`[SelfTest] pass=${pass} fail=${fail}`);
+}
+</script>
+</body>
+</html>
