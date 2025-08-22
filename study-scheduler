@@ -76,11 +76,21 @@
         <button class="btn" id="btnSaveCloud" disabled>存到雲端</button>
         <label class="pill" style="gap:6px"><input type="checkbox" id="autoSyncChk"/> 自動同步</label>
         <span id="syncStatus" class="muted" style="font-size:12px"></span>
+        <label class="pill" style="gap:6px; margin-left:8px"><input type="checkbox" id="debugChk"/> 顯示詳細錯誤</label>
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:16px" id="stripCard"></div>
+
+  <!-- Debug error box -->
+  <div class="card" id="debugCard" style="margin-top:12px; display:none">
+    <div style="display:flex; align-items:center; justify-content:space-between">
+      <h3 style="margin:0">錯誤詳細</h3>
+      <button class="btn icon" id="clearErr">清除</button>
+    </div>
+    <pre id="errBox" style="white-space:pre-wrap; margin-top:8px; background:#0e1220; border:1px solid var(--border); border-radius:10px; padding:10px; max-height:220px; overflow:auto"></pre>
+  </div>
 
   <div class="grid3" style="margin-top:16px">
     <div class="card" id="duePast"></div>
@@ -732,6 +742,15 @@ function initControls(){
   document.getElementById('openRecurring').onclick = openRecurringModal;
   document.getElementById('openQuickAdd').onclick = openQuickAddModal;
   document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
+  const dbgChk = document.getElementById('debugChk');
+  const dbgCard = document.getElementById('debugCard');
+  const clearBtn = document.getElementById('clearErr');
+  if(dbgChk){ dbgChk.onchange = ()=>{ dbgCard.style.display = dbgChk.checked && document.getElementById('errBox').textContent? 'block':'none'; }; }
+  if(clearBtn){ clearBtn.onclick = ()=>{ const box=document.getElementById('errBox'); if(box) box.textContent=''; dbgCard.style.display='none'; }; }
+};
+  document.getElementById('openRecurring').onclick = openRecurringModal;
+  document.getElementById('openQuickAdd').onclick = openQuickAddModal;
+  document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
 }
 
 // ===== Google Drive Sync (appDataFolder) =====
@@ -741,7 +760,20 @@ let tokenClient = null; let accessToken = null; let cloudFileId = null; // cache
 const CLOUD_META_KEY = KEY + '-cloudId';
 const AUTOSYNC_KEY = KEY + '-autoSync';
 const TOKEN_KEY = KEY + '-token'; // { access_token, expires_at }
-const setStatus = (msg)=>{ const el=document.getElementById('syncStatus'); if(el) el.textContent=msg||''; };
+const setStatus = (msg, detail)=>{
+  const el = document.getElementById('syncStatus');
+  if(el) el.textContent = msg || '';
+  const dbgChk = document.getElementById('debugChk');
+  const card = document.getElementById('debugCard');
+  const box = document.getElementById('errBox');
+  if(detail){
+    if(box) box.textContent = String(detail).slice(0, 4000);
+    if(card && (dbgChk?.checked)) card.style.display='block';
+  } else {
+    if(box) box.textContent='';
+    if(card) card.style.display='none';
+  }
+};
 function enableCloudButtons(enabled){
   const ids=['btnLoadCloud','btnSaveCloud']; ids.forEach(id=>{ const b=document.getElementById(id); if(b){ b.disabled=!enabled; }});
 }
@@ -822,12 +854,24 @@ function initAuthUI(){
 async function gFetch(url, opts={}){
   if(!accessToken){ throw new Error('尚未登入'); }
   const doFetch = async ()=> fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
-  let res = await doFetch();
-  if(res.status===401 || res.status===403){
-    const ok = await refreshAccessToken(true); // silent refresh
-    if(ok){ res = await doFetch(); }
+  let res;
+  try{
+    res = await doFetch();
+    if(res.status===401 || res.status===403){
+      const ok = await refreshAccessToken(true);
+      if(ok) res = await doFetch();
+    }
+  }catch(netErr){
+    setStatus('網路錯誤', netErr?.message||netErr);
+    throw netErr;
   }
-  if(!res.ok){ const t = await res.text().catch(()=> ''); throw new Error(`HTTP ${res.status}: ${t}`) }
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    setStatus('雲端請求失敗', `URL: ${url}
+Status: ${res.status}
+Body: ${t}`);
+    throw new Error(`HTTP ${res.status}: ${t}`)
+  }
   return res;
 }
 async function findCloudFile(){
