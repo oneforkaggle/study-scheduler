@@ -47,28 +47,6 @@
   .modal .panel{background:#111726; border:1px solid var(--border); border-radius:12px; padding:16px; width:min(560px,92vw); max-height:85vh; overflow:auto}
   @media (max-width: 1100px){ .grid2{grid-template-columns:1fr} .table-head,.table-row{grid-template-columns:100px 1fr} }
 </style>
-<script>
-// 全域錯誤攔截（畫面可見）
-(function(){
-  const queue=[]; // 若 setStatus 尚未綁定，先暫存
-  function show(msg, detail){
-    var el = document.getElementById('syncStatus');
-    if(el){ el.textContent = msg; }
-    var dbgChk=document.getElementById('debugChk');
-    var card=document.getElementById('debugCard');
-    var box=document.getElementById('errBox');
-    if(box){ box.textContent = (detail||'')+''; }
-    if(card){ card.style.display = (dbgChk && dbgChk.checked && detail)? 'block':'none'; }
-  }
-  window.addEventListener('error', function(e){
-    try{ show('前端錯誤', (e.message||'')+"
-"+(e.filename||'')+":"+(e.lineno||'') ); }catch(_){ }
-  });
-  window.addEventListener('unhandledrejection', function(e){
-    try{ show('未處理的錯誤', (e.reason && (e.reason.stack||e.reason.message)) || String(e.reason)); }catch(_){ }
-  });
-})();
-</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -98,21 +76,13 @@
         <button class="btn" id="btnSaveCloud" disabled>存到雲端</button>
         <label class="pill" style="gap:6px"><input type="checkbox" id="autoSyncChk"/> 自動同步</label>
         <span id="syncStatus" class="muted" style="font-size:12px"></span>
-        <label class="pill" style="gap:6px; margin-left:8px"><input type="checkbox" id="debugChk"/> 顯示詳細錯誤</label>
+        <!-- Show detailed errors toggle -->
+        <label class="pill" style="gap:6px"><input type="checkbox" id="showErrorsChk"/> 顯示詳細錯誤</label>
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:16px" id="stripCard"></div>
-
-  <!-- Debug error box -->
-  <div class="card" id="debugCard" style="margin-top:12px; display:none">
-    <div style="display:flex; align-items:center; justify-content:space-between">
-      <h3 style="margin:0">錯誤詳細</h3>
-      <button class="btn icon" id="clearErr">清除</button>
-    </div>
-    <pre id="errBox" style="white-space:pre-wrap; margin-top:8px; background:#0e1220; border:1px solid var(--border); border-radius:10px; padding:10px; max-height:220px; overflow:auto"></pre>
-  </div>
 
   <div class="grid3" style="margin-top:16px">
     <div class="card" id="duePast"></div>
@@ -121,6 +91,12 @@
   </div>
 
   <div class="card" style="margin-top:16px" id="planner"></div>
+
+  <!-- Error details card (hidden by default) -->
+  <div class="card" id="errorDetails" style="margin-top:16px; display:none">
+    <h3 class="h-accent" style="margin:0 0 8px 0">錯誤詳細</h3>
+    <pre id="errorContent" class="wrap" style="white-space:pre-wrap; word-break:break-word; font-size:13px"></pre>
+  </div>
 </div>
 
 <!-- Modal: Time-block -->
@@ -608,37 +584,37 @@ function buildDuePanels(){
   const renderClassItem = (it)=>{
     const d = dayDiff(it.date);
     const w = it.weekISO; const s = it.subject;
-    const hwPart = `· <label><input type=\"checkbox\" data-ct=\"hw\" data-week=\"${w}\" data-sub=\"${s}\" ${it.hwDone?'checked':''}/> hw</label>` + (it.hwText? `：${it.hwText}`: '');
-    const exPart = ` · <label><input type=\"checkbox\" data-ct=\"ex\" data-week=\"${w}\" data-sub=\"${s}\" ${it.exDone?'checked':''}/> T</label>` + (it.exText? `：${it.exText}`: '');
+    const hwPart = `· <label><input type="checkbox" data-ct="hw" data-week="${w}" data-sub="${s}" ${it.hwDone?'checked':''}/> hw</label>` + (it.hwText? `：${it.hwText}`: '');
+    const exPart = ` · <label><input type="checkbox" data-ct="ex" data-week="${w}" data-sub="${s}" ${it.exDone?'checked':''}/> T</label>` + (it.exText? `：${it.exText}`: '');
     return `
-      <div class=\"rowBetween\"> 
-        <div class=\"wrap\" style=\"flex:1;min-width:0\"> 
+      <div class="rowBetween"> 
+        <div class="wrap" style="flex:1;min-width:0"> 
           <b>${s}</b>${hwPart}${exPart}
           <br/>
-          <label><input type=\"checkbox\" data-ct=\"r0\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[0]?'checked':''}/> R1</label>
-          <label style=\"margin-left:12px\"><input type=\"checkbox\" data-ct=\"r1\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[1]?'checked':''}/> R2</label>
-          <label style=\"margin-left:12px\"><input type=\"checkbox\" data-ct=\"r2\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[2]?'checked':''}/> R3</label>
+          <label><input type="checkbox" data-ct="r0" data-week="${w}" data-sub="${s}" ${it.rev[0]?'checked':''}/> R1</label>
+          <label style="margin-left:12px"><input type="checkbox" data-ct="r1" data-week="${w}" data-sub="${s}" ${it.rev[1]?'checked':''}/> R2</label>
+          <label style="margin-left:12px"><input type="checkbox" data-ct="r2" data-week="${w}" data-sub="${s}" ${it.rev[2]?'checked':''}/> R3</label>
         </div>
-        <div class=\"dtag\">${fmtD(d)}</div>
+        <div class="dtag">${fmtD(d)}</div>
       </div>`;
   };
 
   const renderPlanItem = (it)=>{
     const d = fmtD(dayDiff(it.date));
     return `
-      <div class=\"rowBetween\">
-        <div class=\"wrap\" style=\"flex:1;min-width:0\"><b>${it.subject}</b> · ${it.type}${it.text? `：${it.text}`:''}</div>
-        <div style=\"display:flex; align-items:center; gap:8px\">
-          <div class=\"dtag\">${d}</div>
-          <button class=\"btn icon\" title=\"刪除\" data-del=\"1\" data-key=\"${it.key}\" data-id=\"${it.id}\">🗑</button>
+      <div class="rowBetween">
+        <div class="wrap" style="flex:1;min-width:0"><b>${it.subject}</b> · ${it.type}${it.text? `：${it.text}`:''}</div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <div class="dtag">${d}</div>
+          <button class="btn icon" title="刪除" data-del="1" data-key="${it.key}" data-id="${it.id}">🗑</button>
         </div>
       </div>`;
   };
 
   const renderList = (el, title, list)=>{
-    el.innerHTML = `<h3 class=\"h-accent\" style=\"margin:0 0 8px 0\">${title}</h3>` +
+    el.innerHTML = `<h3 class="h-accent" style="margin:0 0 8px 0">${title}</h3>` +
       (list.length? list.map(it=> it.kind==='CLASS' ? renderClassItem(it) : renderPlanItem(it)).join('')
-        : `<div class=\"muted\">沒有項目</div>`);
+        : `<div class="muted">沒有項目</div>`);
   };
 
   renderList(pastEl,'過去 14 天（由近到遠）', pastList);
@@ -764,15 +740,20 @@ function initControls(){
   document.getElementById('openRecurring').onclick = openRecurringModal;
   document.getElementById('openQuickAdd').onclick = openQuickAddModal;
   document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
-  const dbgChk = document.getElementById('debugChk');
-  const dbgCard = document.getElementById('debugCard');
-  const clearBtn = document.getElementById('clearErr');
-  if(dbgChk){ dbgChk.onchange = ()=>{ dbgCard.style.display = dbgChk.checked && document.getElementById('errBox').textContent? 'block':'none'; }; }
-  if(clearBtn){ clearBtn.onclick = ()=>{ const box=document.getElementById('errBox'); if(box) box.textContent=''; dbgCard.style.display='none'; }; }
-};
-  document.getElementById('openRecurring').onclick = openRecurringModal;
-  document.getElementById('openQuickAdd').onclick = openQuickAddModal;
-  document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
+
+  // hook show errors checkbox
+  const errChk = document.getElementById('showErrorsChk');
+  if(errChk){
+    errChk.onchange = ()=>{
+      showErrors = errChk.checked;
+      const card = document.getElementById('errorDetails');
+      if(card){ card.style.display = showErrors && lastErrorMsg ? '' : (showErrors ? '' : 'none'); }
+      if(showErrors && lastErrorMsg){
+        const pre = document.getElementById('errorContent');
+        if(pre){ pre.textContent = lastErrorMsg; }
+      }
+    };
+  }
 }
 
 // ===== Google Drive Sync (appDataFolder) =====
@@ -781,130 +762,179 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 let tokenClient = null; let accessToken = null; let cloudFileId = null; // cached id
 const CLOUD_META_KEY = KEY + '-cloudId';
 const AUTOSYNC_KEY = KEY + '-autoSync';
-const TOKEN_KEY = KEY + '-token'; // { access_token, expires_at }
-const setStatus = (msg, detail)=>{
-  const el = document.getElementById('syncStatus');
-  if(el) el.textContent = msg || '';
-  const dbgChk = document.getElementById('debugChk');
-  const card = document.getElementById('debugCard');
-  const box = document.getElementById('errBox');
-  if(detail){
-    if(box) box.textContent = String(detail).slice(0, 4000);
-    if(card && (dbgChk?.checked)) card.style.display='block';
-  } else {
-    if(box) box.textContent='';
-    if(card) card.style.display='none';
+// Added keys for storing access token and expiry
+const TOKEN_KEY = KEY + '-accessToken';
+const TOKEN_EXP_KEY = KEY + '-accessTokenExp';
+
+// Debug: state and helpers for showing error details
+let showErrors = false;
+let lastErrorMsg = '';
+
+/**
+ * Reports an error to the UI.  Stores the last error and shows it
+ * when the "showErrors" toggle is enabled.  Also updates the
+ * status bar to show the first line of the error.  If detailed
+ * errors are not enabled, only the status bar will reflect that
+ * an error occurred.
+ * @param {string} msg - The error message to display
+ */
+function reportError(msg){
+  try{
+    lastErrorMsg = msg || '';
+    const card = document.getElementById('errorDetails');
+    const pre = document.getElementById('errorContent');
+    if(showErrors && card && pre){
+      card.style.display = '';
+      pre.textContent = lastErrorMsg;
+    }
+    // Show only the first line in the status bar for brevity
+    const firstLine = (msg || '').toString().split('\n')[0];
+    setStatus('錯誤: ' + firstLine);
+  }catch(_){
+    // ensure errors here don't cause infinite loops
+    setStatus('錯誤: ' + (msg || '未知錯誤'));
   }
-};
+}
+
+// Global error handlers: capture uncaught exceptions and unhandled promise rejections.
+window.addEventListener('error', (e) => {
+  try{
+    // Build a readable message; include file/line when available
+    let message = '';
+    if(e.error && e.error.stack){
+      message = e.error.stack;
+    } else {
+      message = `${e.message} at ${e.filename}:${e.lineno}:${e.colno}`;
+    }
+    reportError('Uncaught error: ' + message);
+  }catch(err){
+    console.error(err);
+  }
+});
+window.addEventListener('unhandledrejection', (e) => {
+  try{
+    let reason = e.reason;
+    let msg = '';
+    if(reason instanceof Error){
+      msg = reason.stack || reason.message || String(reason);
+    } else {
+      try{
+        msg = JSON.stringify(reason);
+      }catch(_){ msg = String(reason); }
+    }
+    reportError('Unhandled promise rejection: ' + msg);
+  }catch(err){
+    console.error(err);
+  }
+});
+const setStatus = (msg)=>{ const el=document.getElementById('syncStatus'); if(el) el.textContent=msg||''; };
 function enableCloudButtons(enabled){
   const ids=['btnLoadCloud','btnSaveCloud']; ids.forEach(id=>{ const b=document.getElementById(id); if(b){ b.disabled=!enabled; }});
 }
-function saveToken(tok){ try{ localStorage.setItem(TOKEN_KEY, JSON.stringify(tok||{})); }catch(_){} }
-function loadToken(){ try{ const j = JSON.parse(localStorage.getItem(TOKEN_KEY)||'{}'); return j && j.access_token? j : null; }catch{ return null } }
-function isTokenValid(tok){ return tok && tok.expires_at && Date.now() < tok.expires_at - 10*1000 }
-async function refreshAccessToken(silentOnly=true){
-  return new Promise((resolve)=>{
-    if(!tokenClient){ resolve(false); return; }
+// helper: silently refresh access token when expired or unauthorized
+async function refreshAccessToken(){
+  return new Promise((resolve, reject)=>{
+    if(!tokenClient){ return resolve(false); }
+    // backup original callback
+    const originalCallback = tokenClient.callback;
     tokenClient.callback = (resp)=>{
+      // restore callback
+      tokenClient.callback = originalCallback;
       if(resp && resp.access_token){
         accessToken = resp.access_token;
-        const ttl = (resp.expires_in? Number(resp.expires_in): 3600) * 1000;
-        saveToken({ access_token, expires_at: Date.now() + ttl });
+        const expiresIn = (resp.expires_in || 3600);
+        const expMs = Date.now() + (expiresIn - 60) * 1000;
+        localStorage.setItem(TOKEN_KEY, accessToken);
+        localStorage.setItem(TOKEN_EXP_KEY, String(expMs));
         enableCloudButtons(true);
         setStatus('已登入');
         resolve(true);
-      }else{
+      } else {
         resolve(false);
       }
     };
     try{
-      tokenClient.requestAccessToken({ prompt: silentOnly? '' : 'consent' });
-    }catch(_){ resolve(false); }
+      tokenClient.requestAccessToken({prompt:''});
+    } catch(e){
+      tokenClient.callback = originalCallback;
+      reject(e);
+    }
   });
 }
+
+async function gFetch(url, opts={}){
+  // attempt to fetch with current access token; if unauthorized then refresh and retry
+  if(!accessToken){
+    throw new Error('尚未登入');
+  }
+  const doRequest = async ()=>{
+    return await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
+  };
+  let res = await doRequest();
+  if(res.status === 401 || res.status === 403){
+    const refreshed = await refreshAccessToken();
+    if(refreshed){
+      res = await doRequest();
+    }
+  }
+  if(!res.ok){
+    const t = await res.text();
+    throw new Error(`HTTP ${res.status}: ${t}`);
+  }
+  return res;
+}
+
 function initAuthUI(){
+  // restore cached file id
   cloudFileId = localStorage.getItem(CLOUD_META_KEY) || null;
+  // restore auto sync state
   const auto = localStorage.getItem(AUTOSYNC_KEY)==='1';
   const autoChk = document.getElementById('autoSyncChk'); if(autoChk){ autoChk.checked = auto; autoChk.onchange = ()=>{ localStorage.setItem(AUTOSYNC_KEY, autoChk.checked?'1':'0'); setStatus(autoChk.checked?'自動同步：開啟':''); } }
   const signBtn = document.getElementById('btnSignIn');
   const loadBtn = document.getElementById('btnLoadCloud');
   const saveBtn = document.getElementById('btnSaveCloud');
   if(!window.google || !google.accounts || !google.accounts.oauth2){ setTimeout(initAuthUI, 300); return; }
+  // attempt to restore saved access token
+  const savedToken = localStorage.getItem(TOKEN_KEY);
+  const savedExp = Number(localStorage.getItem(TOKEN_EXP_KEY)) || 0;
+  if(savedToken && savedExp > Date.now()){
+    accessToken = savedToken;
+    enableCloudButtons(true);
+    setStatus('已登入');
+    // automatically load from cloud to sync if file exists
+    setTimeout(()=>{ cloudLoad().catch(()=>{}); }, 0);
+  }
+  // init token client
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: (resp)=>{
       if(resp && resp.access_token){
         accessToken = resp.access_token;
-        const ttl = (resp.expires_in? Number(resp.expires_in): 3600) * 1000;
-        saveToken({ access_token, expires_at: Date.now() + ttl });
+        const expiresIn = (resp.expires_in || 3600);
+        const expMs = Date.now() + (expiresIn - 60) * 1000;
+        localStorage.setItem(TOKEN_KEY, accessToken);
+        localStorage.setItem(TOKEN_EXP_KEY, String(expMs));
         enableCloudButtons(true);
         setStatus('已登入');
-        // 第一次登入後，若尚未建立雲端檔案，先嘗試讀取（存在才會載入）
-        if(!cloudFileId){ findCloudFile().then(id=>{ if(id){ cloudFileId=id; try{ localStorage.setItem(CLOUD_META_KEY,id); }catch(_){} } }); }
-      } else if(resp && resp.error){
-        setStatus('登入錯誤: ' + resp.error);
-        console.error('[GSI] callback error', resp);
+        // automatically load remote file after login
+        cloudLoad().catch(()=>{});
       }
     }
   });
-  // 互動式登入
-  signBtn.onclick = async ()=>{ setStatus('登入中…'); await refreshAccessToken(false); };
-  // 按鈕
+  signBtn.onclick = ()=>{ tokenClient.requestAccessToken({prompt:'consent'}); };
   loadBtn.onclick = ()=> cloudLoad();
   saveBtn.onclick = ()=> cloudSave();
-  // 啟動時嘗試沿用 token 或 silent refresh
-  const cached = loadToken();
-  if(cached && isTokenValid(cached)){
-    accessToken = cached.access_token; enableCloudButtons(true); setStatus('已登入（沿用）');
-    // 自動載入一次雲端資料（若存在）
-    findCloudFile().then(id=>{ if(id){ cloudFileId=id; cloudLoad(); } });
-  }else{
-    // 靜默刷新（不彈窗）
-    refreshAccessToken(true).then(ok=>{
-      if(ok){
-        enableCloudButtons(true);
-        findCloudFile().then(id=>{ if(id){ cloudFileId=id; cloudLoad(); } });
-      }else{
-        enableCloudButtons(false);
-        setStatus('尚未登入');
-      }
-    });
-  }
 }
 
-async function gFetch(url, opts={}){
-  if(!accessToken){ throw new Error('尚未登入'); }
-  const doFetch = async ()=> fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
-  let res;
-  try{
-    res = await doFetch();
-    if(res.status===401 || res.status===403){
-      const ok = await refreshAccessToken(true);
-      if(ok) res = await doFetch();
-    }
-  }catch(netErr){
-    setStatus('網路錯誤', netErr?.message||netErr);
-    throw netErr;
-  }
-  if(!res.ok){
-    const t = await res.text().catch(()=> '');
-    setStatus('雲端請求失敗', `URL: ${url}
-Status: ${res.status}
-Body: ${t}`);
-    throw new Error(`HTTP ${res.status}: ${t}`)
-  }
-  return res;
-}
 async function findCloudFile(){
   const cached = cloudFileId; if(cached) return cached;
   const q = encodeURIComponent("name='study-scheduler.json' and 'appDataFolder' in parents");
   const url = `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name,modifiedTime)&pageSize=1`;
-  const res = await gFetch(url).catch(()=>null);
-  if(!res) return null;
+  const res = await gFetch(url);
   const json = await res.json();
   const id = (json.files && json.files[0] && json.files[0].id) || null;
-  if(id){ cloudFileId=id; try{ localStorage.setItem(CLOUD_META_KEY,id); }catch(_){} }
+  if(id){ cloudFileId=id; localStorage.setItem(CLOUD_META_KEY,id); }
   return id;
 }
 async function cloudLoad(){
@@ -914,49 +944,42 @@ async function cloudLoad(){
     if(!id){ setStatus('雲端尚未建立檔案'); return; }
     const res = await gFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
     const json = await res.json();
-    if(json && typeof json==='object'){
-      store = json; localStorage.setItem(KEY, JSON.stringify(store));
-      renderAll(); setStatus('載入完成');
-    } else { setStatus('載入完成（空白）'); }
-  }catch(e){ setStatus('載入失敗'); console.error(e); }
+    store = json; localStorage.setItem(KEY, JSON.stringify(store));
+    renderAll(); setStatus('載入完成');
+  }catch(e){
+    // Report details if available
+    reportError(e && e.message ? e.message : (e ? String(e) : '載入失敗'));
+    console.error(e);
+  }
 }
 async function cloudSave(){
   try{
-    if(!accessToken){ setStatus('請先登入'); return; }
     setStatus('上傳中…');
     const meta = { name: 'study-scheduler.json', parents:['appDataFolder'] };
     const media = new Blob([JSON.stringify(store)], {type:'application/json'});
-    const boundary = '----sched-' + Math.random().toString(36).slice(2);
-    const head = `--${boundary}
-Content-Type: application/json; charset=UTF-8
-
-${JSON.stringify(meta)}
---${boundary}
-Content-Type: application/json
-
-`;
-    const tail = `
---${boundary}--`;
+    const boundary = 'foo_bar_baz_' + Math.random().toString(36).slice(2);
+    const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`;
+    const tail = `\r\n--${boundary}--`;
     const multipart = new Blob([head, media, tail], {type:`multipart/related; boundary=${boundary}`});
-
     let id = await findCloudFile();
     let url, method;
     if(id){ url = `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`; method='PATCH'; }
     else { url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`; method='POST'; }
-
     const res = await gFetch(url, { method, headers:{ 'Content-Type': multipart.type }, body: multipart });
-    const j = await res.json(); if(j && j.id){ cloudFileId = j.id; try{ localStorage.setItem(CLOUD_META_KEY, cloudFileId); }catch(_){} }
+    const j = await res.json(); cloudFileId = j.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId);
     setStatus('已同步到雲端');
-  }catch(e){ console.error('[cloudSave] error', e); setStatus('雲端同步失敗'); }
+  }catch(e){
+    reportError(e && e.message ? e.message : (e ? String(e) : '雲端同步失敗'));
+    console.error(e);
+  }
 }
 
 // 覆寫 save：先本機儲存，再（若開啟且已登入）自動同步
 function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
-const debouncedCloudSave = debounce(()=>{ const auto = localStorage.getItem(AUTOSYNC_KEY)==='1'; if(auto && accessToken){ cloudSave(); } }, 1200);
+const debouncedCloudSave = debounce(()=>{ const auto = localStorage.getItem(AUTOSYNC_KEY)==='1'; if(auto && accessToken) cloudSave(); }, 1200);
 function save(){ saveLocal(); debouncedCloudSave(); }
 
 // ===== Boot =====
-
 function boot(){
   initControls();
   renderAll();
@@ -967,25 +990,27 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
 
 // ===== Tiny runtime tests =====
 function runSelfTests(){
+  const bakStore = JSON.parse(JSON.stringify(store));
   const bakKEY = localStorage.getItem(KEY);
   const bakAUTO = localStorage.getItem(AUTOSYNC_KEY);
-  const bakCloudId = localStorage.getItem(CLOUD_META_KEY);
+  const bakToken = accessToken;
   let pass=0, fail=0;
   try{
-    const tmp = { ...store, __test: Math.random() };
-    localStorage.setItem(KEY, JSON.stringify(tmp));
+    store.__test = Math.random();
+    saveLocal();
     const v = localStorage.getItem(KEY);
     if(typeof v==='string' && v.includes('__test')) pass++; else fail++;
   }catch(e){ console.error('[SelfTest] saveLocal', e); fail++; }
   try{
     localStorage.setItem(AUTOSYNC_KEY,'1');
-    debouncedCloudSave();
+    accessToken = null;
+    save();
     pass++;
-  }catch(e){ console.error('[SelfTest] debounce', e); fail++; }
-  // restore
+  }catch(e){ console.error('[SelfTest] save wrapper', e); fail++; }
+  delete store.__test;
   if(bakKEY!==null) localStorage.setItem(KEY,bakKEY); else localStorage.removeItem(KEY);
   if(bakAUTO!==null) localStorage.setItem(AUTOSYNC_KEY,bakAUTO); else localStorage.removeItem(AUTOSYNC_KEY);
-  if(bakCloudId!==null) localStorage.setItem(CLOUD_META_KEY,bakCloudId); else localStorage.removeItem(CLOUD_META_KEY);
+  accessToken = bakToken;
   console.log(`[SelfTest] pass=${pass} fail=${fail}`);
 }
 </script>
