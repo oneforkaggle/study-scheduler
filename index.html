@@ -955,18 +955,43 @@ async function cloudLoad(){
 async function cloudSave(){
   try{
     setStatus('上傳中…');
-    const meta = { name: 'study-scheduler.json', parents:['appDataFolder'] };
-    const media = new Blob([JSON.stringify(store)], {type:'application/json'});
-    const boundary = 'foo_bar_baz_' + Math.random().toString(36).slice(2);
-    const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`;
-    const tail = `\r\n--${boundary}--`;
-    const multipart = new Blob([head, media, tail], {type:`multipart/related; boundary=${boundary}`});
+    // Serialize current store once
+    const bodyJson = JSON.stringify(store);
+    // Check if file already exists
     let id = await findCloudFile();
-    let url, method;
-    if(id){ url = `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`; method='PATCH'; }
-    else { url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`; method='POST'; }
-    const res = await gFetch(url, { method, headers:{ 'Content-Type': multipart.type }, body: multipart });
-    const j = await res.json(); cloudFileId = j.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId);
+    if(id){
+      // Existing file: use media upload (PATCH) to update content only.
+      const url = `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`;
+      // We do not include any metadata (like parents) when updating, otherwise Google Drive will reject.
+      // Some responses return 204 with empty body; still call json() to handle gracefully.
+      const res = await gFetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyJson
+      });
+      // Not all responses contain JSON; swallow any parse error
+      try{
+        const data = await res.json();
+        // Update cloudFileId if provided
+        if(data && data.id){ cloudFileId = data.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId); }
+      }catch(_){ /* ignore, body may be empty */ }
+    } else {
+      // No existing file: create new using multipart with metadata and parents.
+      const meta = { name: 'study-scheduler.json', parents:['appDataFolder'] };
+      const media = new Blob([bodyJson], {type:'application/json'});
+      const boundary = 'foo_bar_baz_' + Math.random().toString(36).slice(2);
+      const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`;
+      const tail = `\r\n--${boundary}--`;
+      const multipart = new Blob([head, media, tail], {type:`multipart/related; boundary=${boundary}`});
+      const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+      const res = await gFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': multipart.type },
+        body: multipart
+      });
+      const j = await res.json();
+      if(j && j.id){ cloudFileId = j.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId); }
+    }
     setStatus('已同步到雲端');
   }catch(e){
     reportError(e && e.message ? e.message : (e ? String(e) : '雲端同步失敗'));
