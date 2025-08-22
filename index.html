@@ -76,11 +76,21 @@
         <button class="btn" id="btnSaveCloud" disabled>存到雲端</button>
         <label class="pill" style="gap:6px"><input type="checkbox" id="autoSyncChk"/> 自動同步</label>
         <span id="syncStatus" class="muted" style="font-size:12px"></span>
+        <label class="pill" style="gap:6px; margin-left:8px"><input type="checkbox" id="debugChk"/> 顯示詳細錯誤</label>
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:16px" id="stripCard"></div>
+
+  <!-- Debug error box -->
+  <div class="card" id="debugCard" style="margin-top:12px; display:none">
+    <div style="display:flex; align-items:center; justify-content:space-between">
+      <h3 style="margin:0">錯誤詳細</h3>
+      <button class="btn icon" id="clearErr">清除</button>
+    </div>
+    <pre id="errBox" style="white-space:pre-wrap; margin-top:8px; background:#0e1220; border:1px solid var(--border); border-radius:10px; padding:10px; max-height:220px; overflow:auto"></pre>
+  </div>
 
   <div class="grid3" style="margin-top:16px">
     <div class="card" id="duePast"></div>
@@ -732,6 +742,15 @@ function initControls(){
   document.getElementById('openRecurring').onclick = openRecurringModal;
   document.getElementById('openQuickAdd').onclick = openQuickAddModal;
   document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
+  const dbgChk = document.getElementById('debugChk');
+  const dbgCard = document.getElementById('debugCard');
+  const clearBtn = document.getElementById('clearErr');
+  if(dbgChk){ dbgChk.onchange = ()=>{ dbgCard.style.display = dbgChk.checked && document.getElementById('errBox').textContent? 'block':'none'; }; }
+  if(clearBtn){ clearBtn.onclick = ()=>{ const box=document.getElementById('errBox'); if(box) box.textContent=''; dbgCard.style.display='none'; }; }
+};
+  document.getElementById('openRecurring').onclick = openRecurringModal;
+  document.getElementById('openQuickAdd').onclick = openQuickAddModal;
+  document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
 }
 
 // ===== Google Drive Sync (appDataFolder) =====
@@ -740,9 +759,46 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 let tokenClient = null; let accessToken = null; let cloudFileId = null; // cached id
 const CLOUD_META_KEY = KEY + '-cloudId';
 const AUTOSYNC_KEY = KEY + '-autoSync';
-const setStatus = (msg)=>{ const el=document.getElementById('syncStatus'); if(el) el.textContent=msg||''; };
+const TOKEN_KEY = KEY + '-token'; // { access_token, expires_at }
+const setStatus = (msg, detail)=>{
+  const el = document.getElementById('syncStatus');
+  if(el) el.textContent = msg || '';
+  const dbgChk = document.getElementById('debugChk');
+  const card = document.getElementById('debugCard');
+  const box = document.getElementById('errBox');
+  if(detail){
+    if(box) box.textContent = String(detail).slice(0, 4000);
+    if(card && (dbgChk?.checked)) card.style.display='block';
+  } else {
+    if(box) box.textContent='';
+    if(card) card.style.display='none';
+  }
+};
 function enableCloudButtons(enabled){
   const ids=['btnLoadCloud','btnSaveCloud']; ids.forEach(id=>{ const b=document.getElementById(id); if(b){ b.disabled=!enabled; }});
+}
+function saveToken(tok){ try{ localStorage.setItem(TOKEN_KEY, JSON.stringify(tok||{})); }catch(_){} }
+function loadToken(){ try{ const j = JSON.parse(localStorage.getItem(TOKEN_KEY)||'{}'); return j && j.access_token? j : null; }catch{ return null } }
+function isTokenValid(tok){ return tok && tok.expires_at && Date.now() < tok.expires_at - 10*1000 }
+async function refreshAccessToken(silentOnly=true){
+  return new Promise((resolve)=>{
+    if(!tokenClient){ resolve(false); return; }
+    tokenClient.callback = (resp)=>{
+      if(resp && resp.access_token){
+        accessToken = resp.access_token;
+        const ttl = (resp.expires_in? Number(resp.expires_in): 3600) * 1000;
+        saveToken({ access_token, expires_at: Date.now() + ttl });
+        enableCloudButtons(true);
+        setStatus('已登入');
+        resolve(true);
+      }else{
+        resolve(false);
+      }
+    };
+    try{
+      tokenClient.requestAccessToken({ prompt: silentOnly? '' : 'consent' });
+    }catch(_){ resolve(false); }
+  });
 }
 function initAuthUI(){
   cloudFileId = localStorage.getItem(CLOUD_META_KEY) || null;
@@ -756,28 +812,77 @@ function initAuthUI(){
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: (resp)=>{
-      if(resp && resp.access_token){ accessToken = resp.access_token; enableCloudButtons(true); setStatus('已登入'); }
+      if(resp && resp.access_token){
+        accessToken = resp.access_token;
+        const ttl = (resp.expires_in? Number(resp.expires_in): 3600) * 1000;
+        saveToken({ access_token, expires_at: Date.now() + ttl });
+        enableCloudButtons(true);
+        setStatus('已登入');
+        // 第一次登入後，若尚未建立雲端檔案，先嘗試讀取（存在才會載入）
+        if(!cloudFileId){ findCloudFile().then(id=>{ if(id){ cloudFileId=id; try{ localStorage.setItem(CLOUD_META_KEY,id); }catch(_){} } }); }
+      } else if(resp && resp.error){
+        setStatus('登入錯誤: ' + resp.error);
+        console.error('[GSI] callback error', resp);
+      }
     }
   });
-  signBtn.onclick = ()=>{ tokenClient.requestAccessToken({prompt:'consent'}); };
+  // 互動式登入
+  signBtn.onclick = async ()=>{ setStatus('登入中…'); await refreshAccessToken(false); };
+  // 按鈕
   loadBtn.onclick = ()=> cloudLoad();
   saveBtn.onclick = ()=> cloudSave();
+  // 啟動時嘗試沿用 token 或 silent refresh
+  const cached = loadToken();
+  if(cached && isTokenValid(cached)){
+    accessToken = cached.access_token; enableCloudButtons(true); setStatus('已登入（沿用）');
+    // 自動載入一次雲端資料（若存在）
+    findCloudFile().then(id=>{ if(id){ cloudFileId=id; cloudLoad(); } });
+  }else{
+    // 靜默刷新（不彈窗）
+    refreshAccessToken(true).then(ok=>{
+      if(ok){
+        enableCloudButtons(true);
+        findCloudFile().then(id=>{ if(id){ cloudFileId=id; cloudLoad(); } });
+      }else{
+        enableCloudButtons(false);
+        setStatus('尚未登入');
+      }
+    });
+  }
 }
 
 async function gFetch(url, opts={}){
-  if(!accessToken) throw new Error('尚未登入');
-  const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
-  if(!res.ok){ const t = await res.text(); throw new Error(`HTTP ${res.status}: ${t}`) }
+  if(!accessToken){ throw new Error('尚未登入'); }
+  const doFetch = async ()=> fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
+  let res;
+  try{
+    res = await doFetch();
+    if(res.status===401 || res.status===403){
+      const ok = await refreshAccessToken(true);
+      if(ok) res = await doFetch();
+    }
+  }catch(netErr){
+    setStatus('網路錯誤', netErr?.message||netErr);
+    throw netErr;
+  }
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    setStatus('雲端請求失敗', `URL: ${url}
+Status: ${res.status}
+Body: ${t}`);
+    throw new Error(`HTTP ${res.status}: ${t}`)
+  }
   return res;
 }
 async function findCloudFile(){
   const cached = cloudFileId; if(cached) return cached;
   const q = encodeURIComponent("name='study-scheduler.json' and 'appDataFolder' in parents");
   const url = `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=appDataFolder&fields=files(id,name,modifiedTime)&pageSize=1`;
-  const res = await gFetch(url);
+  const res = await gFetch(url).catch(()=>null);
+  if(!res) return null;
   const json = await res.json();
   const id = (json.files && json.files[0] && json.files[0].id) || null;
-  if(id){ cloudFileId=id; localStorage.setItem(CLOUD_META_KEY,id); }
+  if(id){ cloudFileId=id; try{ localStorage.setItem(CLOUD_META_KEY,id); }catch(_){} }
   return id;
 }
 async function cloudLoad(){
@@ -787,35 +892,49 @@ async function cloudLoad(){
     if(!id){ setStatus('雲端尚未建立檔案'); return; }
     const res = await gFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
     const json = await res.json();
-    store = json; localStorage.setItem(KEY, JSON.stringify(store));
-    renderAll(); setStatus('載入完成');
+    if(json && typeof json==='object'){
+      store = json; localStorage.setItem(KEY, JSON.stringify(store));
+      renderAll(); setStatus('載入完成');
+    } else { setStatus('載入完成（空白）'); }
   }catch(e){ setStatus('載入失敗'); console.error(e); }
 }
 async function cloudSave(){
   try{
+    if(!accessToken){ setStatus('請先登入'); return; }
     setStatus('上傳中…');
     const meta = { name: 'study-scheduler.json', parents:['appDataFolder'] };
     const media = new Blob([JSON.stringify(store)], {type:'application/json'});
-    const boundary = 'foo_bar_baz_' + Math.random().toString(36).slice(2);
-    const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`;
-    const tail = `\r\n--${boundary}--`;
+    const boundary = '----sched-' + Math.random().toString(36).slice(2);
+    const head = `--${boundary}
+Content-Type: application/json; charset=UTF-8
+
+${JSON.stringify(meta)}
+--${boundary}
+Content-Type: application/json
+
+`;
+    const tail = `
+--${boundary}--`;
     const multipart = new Blob([head, media, tail], {type:`multipart/related; boundary=${boundary}`});
+
     let id = await findCloudFile();
     let url, method;
     if(id){ url = `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart`; method='PATCH'; }
     else { url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`; method='POST'; }
+
     const res = await gFetch(url, { method, headers:{ 'Content-Type': multipart.type }, body: multipart });
-    const j = await res.json(); cloudFileId = j.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId);
+    const j = await res.json(); if(j && j.id){ cloudFileId = j.id; try{ localStorage.setItem(CLOUD_META_KEY, cloudFileId); }catch(_){} }
     setStatus('已同步到雲端');
-  }catch(e){ setStatus('雲端同步失敗'); console.error(e); }
+  }catch(e){ console.error('[cloudSave] error', e); setStatus('雲端同步失敗'); }
 }
 
 // 覆寫 save：先本機儲存，再（若開啟且已登入）自動同步
 function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
-const debouncedCloudSave = debounce(()=>{ const auto = localStorage.getItem(AUTOSYNC_KEY)==='1'; if(auto && accessToken) cloudSave(); }, 1200);
+const debouncedCloudSave = debounce(()=>{ const auto = localStorage.getItem(AUTOSYNC_KEY)==='1'; if(auto && accessToken){ cloudSave(); } }, 1200);
 function save(){ saveLocal(); debouncedCloudSave(); }
 
 // ===== Boot =====
+
 function boot(){
   initControls();
   renderAll();
@@ -826,27 +945,25 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
 
 // ===== Tiny runtime tests =====
 function runSelfTests(){
-  const bakStore = JSON.parse(JSON.stringify(store));
   const bakKEY = localStorage.getItem(KEY);
   const bakAUTO = localStorage.getItem(AUTOSYNC_KEY);
-  const bakToken = accessToken;
+  const bakCloudId = localStorage.getItem(CLOUD_META_KEY);
   let pass=0, fail=0;
   try{
-    store.__test = Math.random();
-    saveLocal();
+    const tmp = { ...store, __test: Math.random() };
+    localStorage.setItem(KEY, JSON.stringify(tmp));
     const v = localStorage.getItem(KEY);
     if(typeof v==='string' && v.includes('__test')) pass++; else fail++;
   }catch(e){ console.error('[SelfTest] saveLocal', e); fail++; }
   try{
     localStorage.setItem(AUTOSYNC_KEY,'1');
-    accessToken = null;
-    save();
+    debouncedCloudSave();
     pass++;
-  }catch(e){ console.error('[SelfTest] save wrapper', e); fail++; }
-  delete store.__test;
+  }catch(e){ console.error('[SelfTest] debounce', e); fail++; }
+  // restore
   if(bakKEY!==null) localStorage.setItem(KEY,bakKEY); else localStorage.removeItem(KEY);
   if(bakAUTO!==null) localStorage.setItem(AUTOSYNC_KEY,bakAUTO); else localStorage.removeItem(AUTOSYNC_KEY);
-  accessToken = bakToken;
+  if(bakCloudId!==null) localStorage.setItem(CLOUD_META_KEY,bakCloudId); else localStorage.removeItem(CLOUD_META_KEY);
   console.log(`[SelfTest] pass=${pass} fail=${fail}`);
 }
 </script>
