@@ -576,37 +576,37 @@ function buildDuePanels(){
   const renderClassItem = (it)=>{
     const d = dayDiff(it.date);
     const w = it.weekISO; const s = it.subject;
-    const hwPart = `· <label><input type=\"checkbox\" data-ct=\"hw\" data-week=\"${w}\" data-sub=\"${s}\" ${it.hwDone?'checked':''}/> hw</label>` + (it.hwText? `：${it.hwText}`: '');
-    const exPart = ` · <label><input type=\"checkbox\" data-ct=\"ex\" data-week=\"${w}\" data-sub=\"${s}\" ${it.exDone?'checked':''}/> T</label>` + (it.exText? `：${it.exText}`: '');
+    const hwPart = `· <label><input type="checkbox" data-ct="hw" data-week="${w}" data-sub="${s}" ${it.hwDone?'checked':''}/> hw</label>` + (it.hwText? `：${it.hwText}`: '');
+    const exPart = ` · <label><input type="checkbox" data-ct="ex" data-week="${w}" data-sub="${s}" ${it.exDone?'checked':''}/> T</label>` + (it.exText? `：${it.exText}`: '');
     return `
-      <div class=\"rowBetween\"> 
-        <div class=\"wrap\" style=\"flex:1;min-width:0\"> 
+      <div class="rowBetween"> 
+        <div class="wrap" style="flex:1;min-width:0"> 
           <b>${s}</b>${hwPart}${exPart}
           <br/>
-          <label><input type=\"checkbox\" data-ct=\"r0\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[0]?'checked':''}/> R1</label>
-          <label style=\"margin-left:12px\"><input type=\"checkbox\" data-ct=\"r1\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[1]?'checked':''}/> R2</label>
-          <label style=\"margin-left:12px\"><input type=\"checkbox\" data-ct=\"r2\" data-week=\"${w}\" data-sub=\"${s}\" ${it.rev[2]?'checked':''}/> R3</label>
+          <label><input type="checkbox" data-ct="r0" data-week="${w}" data-sub="${s}" ${it.rev[0]?'checked':''}/> R1</label>
+          <label style="margin-left:12px"><input type="checkbox" data-ct="r1" data-week="${w}" data-sub="${s}" ${it.rev[1]?'checked':''}/> R2</label>
+          <label style="margin-left:12px"><input type="checkbox" data-ct="r2" data-week="${w}" data-sub="${s}" ${it.rev[2]?'checked':''}/> R3</label>
         </div>
-        <div class=\"dtag\">${fmtD(d)}</div>
+        <div class="dtag">${fmtD(d)}</div>
       </div>`;
   };
 
   const renderPlanItem = (it)=>{
     const d = fmtD(dayDiff(it.date));
     return `
-      <div class=\"rowBetween\">
-        <div class=\"wrap\" style=\"flex:1;min-width:0\"><b>${it.subject}</b> · ${it.type}${it.text? `：${it.text}`:''}</div>
-        <div style=\"display:flex; align-items:center; gap:8px\">
-          <div class=\"dtag\">${d}</div>
-          <button class=\"btn icon\" title=\"刪除\" data-del=\"1\" data-key=\"${it.key}\" data-id=\"${it.id}\">🗑</button>
+      <div class="rowBetween">
+        <div class="wrap" style="flex:1;min-width:0"><b>${it.subject}</b> · ${it.type}${it.text? `：${it.text}`:''}</div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <div class="dtag">${d}</div>
+          <button class="btn icon" title="刪除" data-del="1" data-key="${it.key}" data-id="${it.id}">🗑</button>
         </div>
       </div>`;
   };
 
   const renderList = (el, title, list)=>{
-    el.innerHTML = `<h3 class=\"h-accent\" style=\"margin:0 0 8px 0\">${title}</h3>` +
+    el.innerHTML = `<h3 class="h-accent" style="margin:0 0 8px 0">${title}</h3>` +
       (list.length? list.map(it=> it.kind==='CLASS' ? renderClassItem(it) : renderPlanItem(it)).join('')
-        : `<div class=\"muted\">沒有項目</div>`);
+        : `<div class="muted">沒有項目</div>`);
   };
 
   renderList(pastEl,'過去 14 天（由近到遠）', pastList);
@@ -740,23 +740,102 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
 let tokenClient = null; let accessToken = null; let cloudFileId = null; // cached id
 const CLOUD_META_KEY = KEY + '-cloudId';
 const AUTOSYNC_KEY = KEY + '-autoSync';
+// Added keys for storing access token and expiry
+const TOKEN_KEY = KEY + '-accessToken';
+const TOKEN_EXP_KEY = KEY + '-accessTokenExp';
 const setStatus = (msg)=>{ const el=document.getElementById('syncStatus'); if(el) el.textContent=msg||''; };
 function enableCloudButtons(enabled){
   const ids=['btnLoadCloud','btnSaveCloud']; ids.forEach(id=>{ const b=document.getElementById(id); if(b){ b.disabled=!enabled; }});
 }
+// helper: silently refresh access token when expired or unauthorized
+async function refreshAccessToken(){
+  return new Promise((resolve, reject)=>{
+    if(!tokenClient){ return resolve(false); }
+    // backup original callback
+    const originalCallback = tokenClient.callback;
+    tokenClient.callback = (resp)=>{
+      // restore callback
+      tokenClient.callback = originalCallback;
+      if(resp && resp.access_token){
+        accessToken = resp.access_token;
+        const expiresIn = (resp.expires_in || 3600);
+        const expMs = Date.now() + (expiresIn - 60) * 1000;
+        localStorage.setItem(TOKEN_KEY, accessToken);
+        localStorage.setItem(TOKEN_EXP_KEY, String(expMs));
+        enableCloudButtons(true);
+        setStatus('已登入');
+        resolve(true);
+      } else {
+        resolve(false);
+      }
+    };
+    try{
+      tokenClient.requestAccessToken({prompt:''});
+    } catch(e){
+      tokenClient.callback = originalCallback;
+      reject(e);
+    }
+  });
+}
+
+async function gFetch(url, opts={}){
+  // attempt to fetch with current access token; if unauthorized then refresh and retry
+  if(!accessToken){
+    throw new Error('尚未登入');
+  }
+  const doRequest = async ()=>{
+    return await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
+  };
+  let res = await doRequest();
+  if(res.status === 401 || res.status === 403){
+    const refreshed = await refreshAccessToken();
+    if(refreshed){
+      res = await doRequest();
+    }
+  }
+  if(!res.ok){
+    const t = await res.text();
+    throw new Error(`HTTP ${res.status}: ${t}`);
+  }
+  return res;
+}
+
 function initAuthUI(){
+  // restore cached file id
   cloudFileId = localStorage.getItem(CLOUD_META_KEY) || null;
+  // restore auto sync state
   const auto = localStorage.getItem(AUTOSYNC_KEY)==='1';
   const autoChk = document.getElementById('autoSyncChk'); if(autoChk){ autoChk.checked = auto; autoChk.onchange = ()=>{ localStorage.setItem(AUTOSYNC_KEY, autoChk.checked?'1':'0'); setStatus(autoChk.checked?'自動同步：開啟':''); } }
   const signBtn = document.getElementById('btnSignIn');
   const loadBtn = document.getElementById('btnLoadCloud');
   const saveBtn = document.getElementById('btnSaveCloud');
   if(!window.google || !google.accounts || !google.accounts.oauth2){ setTimeout(initAuthUI, 300); return; }
+  // attempt to restore saved access token
+  const savedToken = localStorage.getItem(TOKEN_KEY);
+  const savedExp = Number(localStorage.getItem(TOKEN_EXP_KEY)) || 0;
+  if(savedToken && savedExp > Date.now()){
+    accessToken = savedToken;
+    enableCloudButtons(true);
+    setStatus('已登入');
+    // automatically load from cloud to sync if file exists
+    setTimeout(()=>{ cloudLoad().catch(()=>{}); }, 0);
+  }
+  // init token client
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
     callback: (resp)=>{
-      if(resp && resp.access_token){ accessToken = resp.access_token; enableCloudButtons(true); setStatus('已登入'); }
+      if(resp && resp.access_token){
+        accessToken = resp.access_token;
+        const expiresIn = (resp.expires_in || 3600);
+        const expMs = Date.now() + (expiresIn - 60) * 1000;
+        localStorage.setItem(TOKEN_KEY, accessToken);
+        localStorage.setItem(TOKEN_EXP_KEY, String(expMs));
+        enableCloudButtons(true);
+        setStatus('已登入');
+        // automatically load remote file after login
+        cloudLoad().catch(()=>{});
+      }
     }
   });
   signBtn.onclick = ()=>{ tokenClient.requestAccessToken({prompt:'consent'}); };
@@ -764,12 +843,6 @@ function initAuthUI(){
   saveBtn.onclick = ()=> cloudSave();
 }
 
-async function gFetch(url, opts={}){
-  if(!accessToken) throw new Error('尚未登入');
-  const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${accessToken}`, ...(opts.headers||{}) } });
-  if(!res.ok){ const t = await res.text(); throw new Error(`HTTP ${res.status}: ${t}`) }
-  return res;
-}
 async function findCloudFile(){
   const cached = cloudFileId; if(cached) return cached;
   const q = encodeURIComponent("name='study-scheduler.json' and 'appDataFolder' in parents");
