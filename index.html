@@ -76,6 +76,8 @@
         <button class="btn" id="btnSaveCloud" disabled>存到雲端</button>
         <label class="pill" style="gap:6px"><input type="checkbox" id="autoSyncChk"/> 自動同步</label>
         <span id="syncStatus" class="muted" style="font-size:12px"></span>
+        <!-- Show detailed errors toggle -->
+        <label class="pill" style="gap:6px"><input type="checkbox" id="showErrorsChk"/> 顯示詳細錯誤</label>
       </div>
     </div>
   </div>
@@ -89,6 +91,12 @@
   </div>
 
   <div class="card" style="margin-top:16px" id="planner"></div>
+
+  <!-- Error details card (hidden by default) -->
+  <div class="card" id="errorDetails" style="margin-top:16px; display:none">
+    <h3 class="h-accent" style="margin:0 0 8px 0">錯誤詳細</h3>
+    <pre id="errorContent" class="wrap" style="white-space:pre-wrap; word-break:break-word; font-size:13px"></pre>
+  </div>
 </div>
 
 <!-- Modal: Time-block -->
@@ -732,6 +740,20 @@ function initControls(){
   document.getElementById('openRecurring').onclick = openRecurringModal;
   document.getElementById('openQuickAdd').onclick = openQuickAddModal;
   document.querySelectorAll('.modal').forEach(m=> m.addEventListener('click', e=>{ if(e.target===m) m.style.display='none' }));
+
+  // hook show errors checkbox
+  const errChk = document.getElementById('showErrorsChk');
+  if(errChk){
+    errChk.onchange = ()=>{
+      showErrors = errChk.checked;
+      const card = document.getElementById('errorDetails');
+      if(card){ card.style.display = showErrors && lastErrorMsg ? '' : (showErrors ? '' : 'none'); }
+      if(showErrors && lastErrorMsg){
+        const pre = document.getElementById('errorContent');
+        if(pre){ pre.textContent = lastErrorMsg; }
+      }
+    };
+  }
 }
 
 // ===== Google Drive Sync (appDataFolder) =====
@@ -743,6 +765,68 @@ const AUTOSYNC_KEY = KEY + '-autoSync';
 // Added keys for storing access token and expiry
 const TOKEN_KEY = KEY + '-accessToken';
 const TOKEN_EXP_KEY = KEY + '-accessTokenExp';
+
+// Debug: state and helpers for showing error details
+let showErrors = false;
+let lastErrorMsg = '';
+
+/**
+ * Reports an error to the UI.  Stores the last error and shows it
+ * when the "showErrors" toggle is enabled.  Also updates the
+ * status bar to show the first line of the error.  If detailed
+ * errors are not enabled, only the status bar will reflect that
+ * an error occurred.
+ * @param {string} msg - The error message to display
+ */
+function reportError(msg){
+  try{
+    lastErrorMsg = msg || '';
+    const card = document.getElementById('errorDetails');
+    const pre = document.getElementById('errorContent');
+    if(showErrors && card && pre){
+      card.style.display = '';
+      pre.textContent = lastErrorMsg;
+    }
+    // Show only the first line in the status bar for brevity
+    const firstLine = (msg || '').toString().split('\n')[0];
+    setStatus('錯誤: ' + firstLine);
+  }catch(_){
+    // ensure errors here don't cause infinite loops
+    setStatus('錯誤: ' + (msg || '未知錯誤'));
+  }
+}
+
+// Global error handlers: capture uncaught exceptions and unhandled promise rejections.
+window.addEventListener('error', (e) => {
+  try{
+    // Build a readable message; include file/line when available
+    let message = '';
+    if(e.error && e.error.stack){
+      message = e.error.stack;
+    } else {
+      message = `${e.message} at ${e.filename}:${e.lineno}:${e.colno}`;
+    }
+    reportError('Uncaught error: ' + message);
+  }catch(err){
+    console.error(err);
+  }
+});
+window.addEventListener('unhandledrejection', (e) => {
+  try{
+    let reason = e.reason;
+    let msg = '';
+    if(reason instanceof Error){
+      msg = reason.stack || reason.message || String(reason);
+    } else {
+      try{
+        msg = JSON.stringify(reason);
+      }catch(_){ msg = String(reason); }
+    }
+    reportError('Unhandled promise rejection: ' + msg);
+  }catch(err){
+    console.error(err);
+  }
+});
 const setStatus = (msg)=>{ const el=document.getElementById('syncStatus'); if(el) el.textContent=msg||''; };
 function enableCloudButtons(enabled){
   const ids=['btnLoadCloud','btnSaveCloud']; ids.forEach(id=>{ const b=document.getElementById(id); if(b){ b.disabled=!enabled; }});
@@ -862,7 +946,11 @@ async function cloudLoad(){
     const json = await res.json();
     store = json; localStorage.setItem(KEY, JSON.stringify(store));
     renderAll(); setStatus('載入完成');
-  }catch(e){ setStatus('載入失敗'); console.error(e); }
+  }catch(e){
+    // Report details if available
+    reportError(e && e.message ? e.message : (e ? String(e) : '載入失敗'));
+    console.error(e);
+  }
 }
 async function cloudSave(){
   try{
@@ -880,7 +968,10 @@ async function cloudSave(){
     const res = await gFetch(url, { method, headers:{ 'Content-Type': multipart.type }, body: multipart });
     const j = await res.json(); cloudFileId = j.id; localStorage.setItem(CLOUD_META_KEY, cloudFileId);
     setStatus('已同步到雲端');
-  }catch(e){ setStatus('雲端同步失敗'); console.error(e); }
+  }catch(e){
+    reportError(e && e.message ? e.message : (e ? String(e) : '雲端同步失敗'));
+    console.error(e);
+  }
 }
 
 // 覆寫 save：先本機儲存，再（若開啟且已登入）自動同步
